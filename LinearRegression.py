@@ -67,6 +67,7 @@ class BayesianLinearRegression:
         """
         self.mu = theta_mean
         self.cov = theta_cov
+        self.log_det = np.linalg.slogdet(theta_cov)[-1]
         self.prec = np.linalg.inv(theta_cov)
 
         self.sig = sig
@@ -112,7 +113,7 @@ class BayesianLinearRegression:
         :param X: the samples around which to calculate the standard deviation
         :return: a numpy array with the standard deviations (same shape as X)
         """
-        return np.sqrt(np.diagonal(self.phi(X) @ self.cov @ self.phi(X).T)) + np.sqrt(self.sig)
+        return np.sqrt(np.diagonal(self.phi(X) @ self.cov @ self.phi(X).T) + self.sig)
 
     def posterior_sample(self, X: np.ndarray) -> np.ndarray:
         """
@@ -124,6 +125,19 @@ class BayesianLinearRegression:
         chol = np.linalg.cholesky(self.cov.astype(np.float64) + np.eye(self.cov.shape[-1])*1e-10)
         theta = self.mu[:, None] + chol@np.random.randn(chol.shape[-1], 1)
         return (H@theta)[:, 0]
+
+    def log_evidence(self, X: np.ndarray, y:np.ndarray) -> float:
+        mu_0 = self.mu.copy()
+        prec_0 = self.prec.copy()
+        self.fit(X, y)
+        H = self.phi(X)
+        dist_y = -0.5*(np.sum((H@self.mu[:, None] - y[:, None])**2)/self.sig + len(y)*np.log(self.sig))
+        mu_meaned = self.mu - mu_0
+        dist_mu = -0.5*(np.sum(mu_meaned*(prec_0@mu_meaned[:, None])[:, None]) + self.log_det)
+        return dist_y + dist_mu - 0.5*np.linalg.slogdet(self.prec)[-1]
+
+    def evidence(self, X:np.ndarray, y:np.ndarray) -> float:
+        return np.exp(self.log_evidence(X, y))
 
 
 class LinearRegression:
