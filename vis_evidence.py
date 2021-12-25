@@ -166,7 +166,7 @@ def main(doc):
     fit_line = pts_fig.line(XX, pred, line_width=2, color='red')
 
     # plot data points and make tools to move them
-    pts = mean_fig.scatter(x=[0], y=[0], size=10)
+    pts = mean_fig.scatter(x=[0], y=[0], size=10, fill_color='white', line_color='black', line_width=2)
     draw_tool = PointDrawTool(renderers=[pts])
     mean_fig.add_tools(draw_tool)
     mean_fig.toolbar.active_tap = draw_tool
