@@ -3,6 +3,27 @@ from matplotlib import pyplot as plt
 from scipy.special import logsumexp
 from tqdm import tqdm
 from matplotlib.animation import FuncAnimation
+from matplotlib.colors import LinearSegmentedColormap
+
+
+class LinearColormap(LinearSegmentedColormap):
+
+    def __init__(self, name, segmented_data, index=None, **kwargs):
+        if index is None:
+            index = np.linspace(0, 1, len(segmented_data['red']))
+            for key in segmented_data:
+                segmented_data[key] = zip(index, segmented_data[key])
+        segmented_data = dict((key, [(x, y, y) for x, y in segmented_data[key]]) for key in segmented_data)
+        LinearSegmentedColormap.__init__(self, name, segmented_data, **kwargs)
+
+
+alph_spec = {
+    'red': [.0, .0],
+    'green': [0., 0.],
+    'blue': [0., .0],
+    'alpha': [1., .0]
+}
+alph_cmap = LinearColormap('alph_cmap', alph_spec)
 
 
 def kde(pts: np.ndarray, xx: np.ndarray, yy: np.ndarray, sigma: float=.0005):
@@ -31,102 +52,140 @@ def gibbs(p: np.ndarray, T: int, N: int, strt: np.ndarray=None):
     return points
 
 
-x_range = [0, 1]
-y_range = [0, 1]
-N = 100
-x, y = np.linspace(x_range[0], x_range[1], N), np.linspace(y_range[0], y_range[1], N)
+def create_prob_map(n_centers, x_var: float=.01, y_var: float=.01, corr: float=.5, separation: float=0, width: float=.8,
+                    range: tuple=tuple([0, 1]), resolution: int=100):
+    # set up grid ranges and mesh
+    drange = range[1]-range[0]
+    mrange = np.mean(range)
+    x, y = np.linspace(range[0], range[1], resolution), np.linspace(range[0], range[1], resolution)
+    xx, yy = np.meshgrid(x, y)
+    d = np.concatenate([xx.flatten()[:, None], yy.flatten()[:, None]], axis=1)
+
+    # set up probability parameters
+    width = np.array([width, width])[None, :]
+    clusts = np.array([
+        [mrange + 0.5*drange*separation, mrange + 0.5*drange*separation],
+        [mrange - 0.5*drange*separation, mrange - 0.5*drange*separation],
+    ])
+
+    # sample centers and create covariances
+    centers = np.clip(clusts[np.random.choice(2, n_centers), :] + width*(np.random.rand(n_centers, 2) - .5), .1, .9)
+
+    cov_xy = corr * np.sqrt(y_var) * np.sqrt(x_var)
+    cov = np.array([[x_var, cov_xy], [cov_xy, y_var]])
+    prec = np.linalg.inv(cov)
+
+    # create distribution
+    p = logsumexp(
+        -0.5 * np.sum((d[:, None] - centers[None, :]) * ((d[:, None] - centers[None, :]) @ prec[None, ...]), axis=-1),
+        axis=1)
+
+    p = np.exp(p - logsumexp(p))
+    p = p.reshape(xx.shape)
+    return p, x, y
+
+
+def single_particle_animation(pts, x, y, ell: int=5, fps: int=10, save_p: str='gibbs.gif'):
+    global text
+    xx, yy = np.meshgrid(x, y)
+
+    fig, ax1 = plt.subplots()
+    ax1.contourf(xx, yy, p, 15, cmap='copper', alpha=.75)
+    ax1.axis('off')
+    scat = ax1.scatter([-2], [-2], 30, 'k', alpha=.5)
+    norm = plt.Normalize(0, 1)
+    scat = ax1.scatter([-2], [-2], 30, c=[.1], cmap=alph_cmap, norm=norm)
+    text = ax1.text(.01, .01, f'0/{pts.shape[0]}', color='r', verticalalignment='bottom', horizontalalignment='left')
+
+    def init():
+        ax1.set_xlim(np.min(x), np.max(x))
+        ax1.set_ylim(np.min(y), np.max(y))
+        ax1.set_aspect(1)
+        return scat,
+
+    pbar = tqdm(range(pts.shape[0]))
+
+    def update(frame):
+        global text
+        pbar.update(1)
+        text.set_text(f'{frame + 1}/{pts.shape[0]}')
+        if frame > 0:
+            data = np.concatenate([x[pts[np.max([frame-ell, 0]):frame+1, 0:1, 1]].squeeze()[:, None],
+                                   y[pts[np.max([frame-ell, 0]):frame+1, 0:1, 0]].squeeze()[:, None]], axis=1)
+        else: data = np.concatenate([x[pts[0, 0:1, 1]][:, None],
+                                     y[pts[0, 0:1, 0]][:, None]], axis=1)
+        scat.set_offsets(data)
+        scat.set_array(np.linspace(1, 0, len(data)))
+        return scat,
+
+    ani = FuncAnimation(fig, update, frames=pts.shape[0], init_func=init, blit=True, )
+    ani.save(save_p, fps=fps)
+
+
+def multi_particle_animation(pts, x, y, show_factor: int=1, m: int=5, k_sig: float=0.001, n_pts: int=50,
+                             seconds: int=7, save_p: str='gibbs.gif'):
+    global cont, c
+
+    xx, yy = np.meshgrid(x, y)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    ax1.contourf(xx, yy, p, 15, cmap='copper', alpha=.75)
+    ax1.axis('off')
+    scat = ax1.scatter([-2], [-2], 30, 'k', alpha=.5)
+    text = ax1.text(.01, .01, f'0/{pts.shape[0]}', color='r', verticalalignment='bottom', horizontalalignment='left')
+
+    cont = ax2.contourf(xx, yy, kde(np.concatenate([x[pts[0, :, 1]][:, None], y[pts[0, :, 0]][:, None]], axis=1),
+                                    xx, yy), 15, cmap='copper', alpha=.75)
+    ax2.axis('off')
+
+    def init():
+        ax1.set_xlim(np.min(x), np.max(x))
+        ax1.set_ylim(np.min(y), np.max(y))
+        ax1.set_aspect(1)
+
+        ax2.set_xlim(np.min(x), np.max(x))
+        ax2.set_ylim(np.min(y), np.max(y))
+        ax2.set_aspect(1)
+        return scat,
+
+    c = 0
+    maps = np.zeros([m, *p.shape])
+    pbar = tqdm(range(pts.shape[0] // show_factor))
+
+    def update(frame):
+        global cont, c
+        pbar.update(1)
+
+        frame = show_factor * frame
+        text.set_text(f'{frame + 1}/{pts.shape[0]}')
+        data = np.concatenate([x[pts[frame, :n_pts, 1]][:, None], y[pts[frame, :n_pts, 0]][:, None]], axis=1)
+        scat.set_offsets(data)
+
+        data = np.concatenate([x[pts[frame, :, 1]][:, None], y[pts[frame, :, 0]][:, None]], axis=1)
+
+        for col in cont.collections: plt.gca().collections.remove(col)
+        if frame > m:
+            map_tmp = kde(data, xx, yy, sigma=k_sig)
+            maps[c % m] = map_tmp
+            c += 1
+            map = np.mean(maps, axis=0)
+        else:
+            map = kde(data, xx, yy, sigma=k_sig)
+        cont = ax2.contourf(xx, yy, map, 15, cmap='copper', alpha=.75)
+
+        return scat,
+
+    ani = FuncAnimation(fig, update, frames=pts.shape[0]//show_factor, init_func=init, blit=True, )
+    ani.save(save_p, fps=(pts.shape[0]//show_factor)//seconds)
+
+
+p, x, y = create_prob_map(n_centers=20, separation=0, width=1)
+pts = gibbs(p, T=200, N=1, strt=np.array([p.shape[0]-1, 0])).astype(int)
 xx, yy = np.meshgrid(x, y)
-d = np.concatenate([xx.flatten()[:, None], yy.flatten()[:, None]], axis=1)
-
-seperation = 0
-width = np.array([.1, .1])[None, :]
-clusts = np.array([
-    [np.mean(x_range), np.mean(y_range) + 0.5*(y_range[1]-y_range[0])*seperation],
-    [np.mean(x_range), np.mean(y_range) - 0.5*(y_range[1]-y_range[0])*seperation],
-])
-
-n_centers = 1
-centers = np.clip(clusts[np.random.choice(2, n_centers), :] + width*(np.random.rand(n_centers, 2)-.5), .1, .9)
-
-corr = 0.9
-y_var = .02
-x_var = .02
-cov_xy = corr*np.sqrt(y_var)*np.sqrt(x_var)
-cov = np.array([[x_var, cov_xy], [cov_xy, y_var]])
-prec = np.linalg.inv(cov)
-p = logsumexp(-0.5*np.sum((d[:, None]-centers[None, :])*((d[:, None]-centers[None, :])@prec[None, ...]), axis=-1),
-              axis=1)
-# p = logsumexp(-0.5*np.sum((d[:, None]-centers[None, :])**2, axis=-1)/sigma, axis=1)
-p = np.exp(p - logsumexp(p))
-p = p.reshape(xx.shape)
-
 plt.figure()
 plt.contourf(xx, yy, p, 15, cmap='copper', alpha=.75)
 plt.axis('off')
 plt.show()
 
-pts = gibbs(p, T=500, N=1, strt=np.array([p.shape[0]-1, 0])).astype(int)
-# pts = gibbs(p, T=2000, N=500, strt=np.array([p.shape[0]//2, p.shape[1]//2])).astype(int)
-
-
-# fig, (ax1, ax2) = plt.subplots(1, 2)
-fig, ax1 = plt.subplots()
-ax1.contourf(xx, yy, p, 15, cmap='copper', alpha=.75)
-ax1.axis('off')
-scat = ax1.scatter([-2], [-2], 30, 'r', alpha=.75)
-text = ax1.text(.01, .01, f'0/{pts.shape[0]}', color='r', verticalalignment='bottom', horizontalalignment='left')
-
-# tmp = pts[0, :, ]
-# cont = ax2.contourf(xx, yy, kde(np.concatenate([x[pts[0, :, 1]][:, None], y[pts[0, :, 0]][:, None]], axis=1),
-#                                 xx, yy), 15, cmap='copper', alpha=.75)
-# ax2.axis('off')
-
-
-def init():
-    ax1.set_xlim(x_range[0], x_range[1])
-    ax1.set_ylim(y_range[0], y_range[1])
-    ax1.set_aspect(1)
-
-    # ax2.set_xlim(x_range[0], x_range[1])
-    # ax2.set_ylim(y_range[0], y_range[1])
-    # ax2.set_aspect(1)
-    return scat,
-
-
-show_factor = 1
-m = 5
-c = 0
-maps = np.zeros([m, *p.shape])
-k_sig = 0.001
-
-
-def update(frame):
-    print(frame)
-    global cont, c, m, maps
-
-    frame = show_factor*frame
-    text.set_text(f'{frame+1}/{pts.shape[0]}')
-    n_pts = 50
-    # data = np.concatenate([x[pts[frame, :n_pts, 1]][:, None], y[pts[frame, :n_pts, 0]][:, None]], axis=1)
-    data = np.concatenate([x[pts[frame, :, 1]][:, None], y[pts[frame, :, 0]][:, None]], axis=1)
-    scat.set_offsets(data)
-
-    # data = np.concatenate([x[pts[frame, :, 1]][:, None], y[pts[frame, :, 0]][:, None]], axis=1)
-    #
-    # for col in cont.collections: plt.gca().collections.remove(col)
-    # if frame > 5:
-    #     # data = np.concatenate([x[pts[frame-m:frame+1, :, 1]].flatten()[:, None],
-    #     #                        y[pts[frame-m:frame+1, :, 0]].flatten()[:, None]], axis=1)
-    #     map_tmp = kde(data, xx, yy, sigma=k_sig)
-    #     maps[c % m] = map_tmp
-    #     c += 1
-    #     map = np.mean(maps, axis=0)
-    # else:
-    #     map = kde(data, xx, yy, sigma=k_sig)
-    # cont = ax2.contourf(xx, yy, map, 15, cmap='copper', alpha=.75)
-
-    return scat,
-
-
-ani = FuncAnimation(fig, update, frames=pts.shape[0]//show_factor, init_func=init, blit=True,)
-ani.save('gibbs.gif', fps=pts.shape[0]//7)
+# multi_particle_animation(pts, x, y, k_sig=0.001)
+single_particle_animation(pts, x, y, save_p='gibbs_single.gif')
