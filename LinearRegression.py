@@ -10,7 +10,7 @@ def polynomial_basis_functions(degree: int) -> Callable:
              polynomial basis functions, a numpy array of shape [N, degree+1]
     """
     def pbf(x: np.ndarray):
-        return np.concatenate([(x**i)[:, None]/(degree**i) for i in range(degree+1)], axis=1)
+        return np.concatenate([(x**i)[:, None]/degree for i in range(degree+1)], axis=1)
     return pbf
 
 
