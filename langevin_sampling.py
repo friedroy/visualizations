@@ -10,6 +10,19 @@ from typing import Union, Callable, Tuple
 
 def BLR_langevin(x: np.ndarray, y: np.ndarray, prior: Tuple[np.ndarray, np.ndarray, float, Callable], T: int,
                  N: int, eps: Union[float, Callable]=1e-8, save_p: str='BLR_langevin.gif', show_factor: int=1):
+    """
+    Create animation of posterior samples from BLR using Langevin sampling
+    :param x: input points as a numpy array with length M
+    :param y: output points as a numpy array with length M
+    :param prior: the prior to use for sampling as the tuple (mean, precision matrix, basis_func) where basis_func is a
+                  function that receives points and returns the basis functions on those points
+    :param T: number of time steps to run the Langevin sampling algorithm
+    :param N: number of functions to sample from the posterior
+    :param eps: the step size to use - either a number or a function that returns the step size given the iteration
+    :param save_p: the save path for the animation, should include the extension
+    :param show_factor: the skips between frames that should be shown - if show_factor is 2, every second frame will
+                        be shown, if it's 5 every 5-th frame etc.
+    """
     mu, prec, noise, basis_func = prior
 
     H = basis_func(x)
@@ -47,6 +60,16 @@ def BLR_langevin(x: np.ndarray, y: np.ndarray, prior: Tuple[np.ndarray, np.ndarr
 
 
 def GMM_sample(gmm: tuple, T: int, N: int, eps: Union[float, Callable]=1e-8, strt: np.ndarray=None):
+    """
+    Use Langevin sampling in order to sample from a GMM
+    :param gmm: the GMM to sample from as a tuple (mu, cov, prec) of all means, covariances and precision matrices (this
+                is the same format as the output of gibbs_sampling.create_prob_mat with "return_centers" set to True)
+    :param T: number of time steps to sample
+    :param N: number of points to sample from the GMM
+    :param eps: the step size to use - either a number or a function that returns the step size given the iteration
+    :param strt: the starting positions of the particles to use
+    :return: a numpy array of shape [T, N, 2] of the sampling steps using the Langevin sampling algorithm
+    """
     if strt is None: strt = .1*np.random.randn(N, 2)
     mu, cov, prec = gmm
     det = np.linalg.slogdet(cov)[1]
@@ -61,6 +84,15 @@ def GMM_sample(gmm: tuple, T: int, N: int, eps: Union[float, Callable]=1e-8, str
 
 
 def langevin_sampling(strt, dx: Callable, T: int, N: int, eps: Union[float, Callable]=1e-8):
+    """
+    Unadjusted Langevin sampling algorithm
+    :param strt: the starting positions of the particles
+    :param dx: a function that receives multiple points and returns the gradient of the loss function at those points
+    :param T: number of time steps to sample
+    :param N: number of particles to sample in each time step
+    :param eps: the step size to use - either a number or a function that returns the step size given the iteration
+    :return: a numpy array of shape [T, N, 2] of the sampling steps using the Langevin sampling algorithm
+    """
     if type(eps) == float:
         num = eps
         eps = lambda i: num

@@ -58,11 +58,13 @@ def gibbs(p: np.ndarray, T: int, N: int, strt: np.ndarray=None):
     points[0, :, :] = strt[None, :]
     for i in tqdm(range(1, T)):
         for j in range(N):
+            # sample the x coordinate every even iteration
             if not i%2:
                 points[i, j, 0] = points[i-1, j, 0]
                 prob = p[int(points[i-1, j, 0]), :]
                 prob = prob/np.sum(prob)
                 points[i, j, 1] = np.random.choice(p.shape[1], 1, p=prob)[0]
+            # sample the y coordinate every odd iteration
             else:
                 points[i, j, 1] = points[i-1, j, 1]
                 prob = p[:, int(points[i-1, j, 1])]
@@ -135,6 +137,7 @@ def single_particle_animation(pts, prob_map, x, y, ell: int=5, fps: int=10, save
     global text
     xx, yy = np.meshgrid(x, y)
 
+    # create initial figure
     fig, ax1 = plt.subplots()
     ax1.contourf(xx, yy, prob_map, 15, cmap='copper', alpha=.75)
     ax1.axis('off')
@@ -152,10 +155,13 @@ def single_particle_animation(pts, prob_map, x, y, ell: int=5, fps: int=10, save
     pbar = tqdm(range(pts.shape[0]))
 
     def update(frame):
+        """
+        Plots the relevant information each frame
+        """
         global text
-        pbar.update(1)
-        text.set_text(f'{frame + 1}/{pts.shape[0]}')
-        if frame > 0:
+        pbar.update(1)  # update the progress-bar
+        text.set_text(f'{frame + 1}/{pts.shape[0]}')  # add text for iteration number in animation
+        if frame > 0:  # if the frame is larger than 0 (not the first), show past iterations as well
             data = np.concatenate([pts[np.max([frame-ell, 0]):frame+1, 0:1, 1].squeeze()[:, None],
                                    pts[np.max([frame-ell, 0]):frame+1, 0:1, 0].squeeze()[:, None]], axis=1)
         else: data = np.concatenate([pts[0, 0:1, 1][:, None],
@@ -192,11 +198,18 @@ def multi_particle_animation(pts, prob_map, x, y, show_factor: int=1, m: int=5, 
     xx, yy = np.meshgrid(x, y)
 
     fig, (ax1, ax2) = plt.subplots(1, 2)
+
+    # create contour for true distribution
     ax1.contourf(xx, yy, prob_map, 15, cmap='copper', alpha=.75)
     ax1.axis('off')
+
+    # scatter of points over true distribution
     scat = ax1.scatter([-2], [-2], 30, 'k', alpha=.5)
+
+    # text to show iteration number of the algorithm
     text = ax1.text(.01, .01, f'0/{pts.shape[0]}', color='r', verticalalignment='bottom', horizontalalignment='left')
 
+    # create another contour to show the distribution approximated by the algorithm
     cont = ax2.contourf(xx, yy, kde(np.concatenate([pts[0, :, 0][:, None], pts[0, :, 1][:, None]], axis=1),
                                     xx, yy), 15, cmap='copper', alpha=.75)
     ax2.axis('off')
@@ -216,28 +229,34 @@ def multi_particle_animation(pts, prob_map, x, y, show_factor: int=1, m: int=5, 
     pbar = tqdm(range(pts.shape[0] // show_factor))
 
     def update(frame):
+        """
+        Plots the relevant information each frame
+        """
         global cont, c
         pbar.update(1)
 
-        frame = show_factor * frame
-        text.set_text(f'{frame + 1}/{pts.shape[0]}')
+        frame = show_factor * frame  # show only part of the sampling process (only every show_factor frames are shown)
+        text.set_text(f'{frame + 1}/{pts.shape[0]}')  # update plot text to show correct iteration
+
+        # define the data for the scatter plot, showing only n_pts points
         data = np.concatenate([pts[frame, :n_pts, 0][:, None], pts[frame, :n_pts, 1][:, None]], axis=1)
         scat.set_offsets(data)
 
+        # collect points in order to calculate the distribution approximated in each frame, using KDE
         data = np.concatenate([pts[frame, :, 0][:, None], pts[frame, :, 1][:, None]], axis=1)
-
         for col in cont.collections: plt.gca().collections.remove(col)
-        if frame > m:
+        if frame > m:  # if enough frames passed, take the mean over the last m KDEs found
             map_tmp = kde(data, xx, yy, sigma=k_sig)
             maps[c % m] = map_tmp
             c += 1
             map = np.mean(maps, axis=0)
         else:
             map = kde(data, xx, yy, sigma=k_sig)
-        cont = ax2.contourf(xx, yy, map, 15, cmap='copper', alpha=.75)
+        cont = ax2.contourf(xx, yy, map, 15, cmap='copper', alpha=.75)  # plot contours of approx. distribution
 
         return scat,
 
+    # create and save animation
     ani = FuncAnimation(fig, update, frames=pts.shape[0]//show_factor, init_func=init, blit=True, )
     ani.save(save_p, fps=(pts.shape[0]//show_factor)//seconds)
 
